@@ -1,11 +1,21 @@
 from flask import Flask, render_template_string, request, jsonify
-import json
+from flask_cors import CORS
+import os
+import requests
 from drainage_model import DrainageSimulationModel
 
 app = Flask(__name__)
+CORS(app)
 
-# Inicializar modelo (asegúrate de tener el archivo Excel)
-modelo = DrainageSimulationModel('datos.xlsx')
+DATA_FILE = os.environ.get('DATA_FILE', 'datos.xlsx')
+# Si DATA_FILE es una URL pública, descargarla localmente al inicio
+if DATA_FILE.startswith('http'):
+    r = requests.get(DATA_FILE, timeout=30)
+    open('datos.xlsx', 'wb').write(r.content)
+    DATA_FILE = 'datos.xlsx'
+
+# Inicializar modelo
+modelo = DrainageSimulationModel(DATA_FILE)
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
