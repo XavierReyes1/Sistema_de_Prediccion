@@ -5,3 +5,5 @@ numpy
 openpyxl
 requests
 gunicorn
+
+web: gunicorn --chdir prueba web_drainage_app:app --bind 0.0.0.0:$PORT
