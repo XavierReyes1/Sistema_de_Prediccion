@@ -2,6 +2,7 @@ from flask import Flask, render_template_string, request, jsonify
 from flask_cors import CORS
 import os
 import requests
+
 from drainage_model import DrainageSimulationModel
 
 app = Flask(__name__)
@@ -9,10 +10,16 @@ CORS(app)
 
 DATA_FILE = os.environ.get('DATA_FILE', 'datos.xlsx')
 # Si DATA_FILE es una URL pública, descargarla localmente al inicio
-if DATA_FILE.startswith('http'):
-    r = requests.get(DATA_FILE, timeout=30)
-    open('datos.xlsx', 'wb').write(r.content)
-    DATA_FILE = 'datos.xlsx'
+if isinstance(DATA_FILE, str) and DATA_FILE.startswith('http'):
+    try:
+        r = requests.get(DATA_FILE, timeout=30)
+        r.raise_for_status()
+        with open('datos.xlsx', 'wb') as f:
+            f.write(r.content)
+        DATA_FILE = 'datos.xlsx'
+    except Exception as e:
+        # Si falla la descarga, dejar que el error sea visible en logs
+        raise RuntimeError(f"No se pudo descargar DATA_FILE desde {DATA_FILE}: {e}")
 
 # Inicializar modelo
 modelo = DrainageSimulationModel(DATA_FILE)
