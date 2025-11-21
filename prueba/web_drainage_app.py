@@ -5,7 +5,7 @@ from drainage_model import DrainageSimulationModel
 app = Flask(__name__)
 
 # Inicializar modelo (asegúrate de tener el archivo Excel)
-modelo = DrainageSimulationModel('datos_zonas.xlsx')
+modelo = DrainageSimulationModel('datos.xlsx')
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -235,8 +235,9 @@ HTML_TEMPLATE = """
                 <div class="form-group">
                     <label>Intensidad de Lluvia:</label>
                     <select id="intensity">
+                        <option value="historical" selected>📊 Basada en Datos Históricos</option>
                         <option value="light">Ligera (2-5 mm/h)</option>
-                        <option value="moderate" selected>Moderada (5-15 mm/h)</option>
+                        <option value="moderate">Moderada (5-15 mm/h)</option>
                         <option value="heavy">Fuerte (15-40 mm/h)</option>
                         <option value="extreme">Extrema (30-80 mm/h)</option>
                     </select>
@@ -352,14 +353,23 @@ HTML_TEMPLATE = """
                     config: config
                 })
             })
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    return response.json().then(err => {
+                        throw new Error(err.error || 'Error en el servidor');
+                    });
+                }
+                return response.json();
+            })
             .then(data => {
                 document.getElementById('loading').style.display = 'none';
+                console.log('Datos recibidos:', data); // Para debug
                 displayResults(data);
             })
             .catch(error => {
                 document.getElementById('loading').style.display = 'none';
-                alert('Error en la simulación: ' + error);
+                console.error('Error completo:', error);
+                alert('Error en la simulación: ' + error.message);
             });
         }
         
@@ -367,34 +377,59 @@ HTML_TEMPLATE = """
             const results = document.getElementById('results');
             results.style.display = 'block';
             
+            // Verificar que los datos existan
+            if (!data || !data.summary || !data.summary.simulacion) {
+                console.error('Datos inválidos:', data);
+                alert('Error: Datos de simulación inválidos');
+                return;
+            }
+            
             // Mostrar resumen
             const summary = data.summary;
-            const summaryHTML = `
+            const sim = summary.simulacion;
+            const hist = summary.datos_historicos || {};
+            
+            let summaryHTML = `
                 <div class="stat-card">
-                    <div class="stat-label">Lluvia Total</div>
-                    <div class="stat-value">${summary.total_lluvia_mm} mm</div>
+                    <div class="stat-label">Lluvia Total Simulada</div>
+                    <div class="stat-value">${sim.total_lluvia_mm || 0} mm</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">Excedente Total</div>
-                    <div class="stat-value">${summary.excedente_total_mm} mm</div>
+                    <div class="stat-value">${sim.excedente_total_mm || 0} mm</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">Lluvia Máxima</div>
-                    <div class="stat-value">${summary.lluvia_maxima_mm} mm/h</div>
+                    <div class="stat-label">Lluvia Máxima (hora)</div>
+                    <div class="stat-value">${sim.lluvia_maxima_mm || 0} mm/h</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">Horas con Excedente</div>
-                    <div class="stat-value">${summary.horas_con_excedente}</div>
+                    <div class="stat-value">${sim.horas_con_excedente || 0}</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">Volumen Total</div>
-                    <div class="stat-value">${summary.volumen_total_litros.toLocaleString()} L</div>
+                    <div class="stat-value">${(sim.volumen_total_litros || 0).toLocaleString()} L</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">Nivel de Riesgo</div>
-                    <div class="risk-badge risk-${summary.max_nivel_riesgo.toLowerCase()}">${summary.max_nivel_riesgo}</div>
+                    <div class="risk-badge risk-${(sim.max_nivel_riesgo || 'normal').toLowerCase()}">${sim.max_nivel_riesgo || 'Normal'}</div>
                 </div>
             `;
+            
+            // Agregar estadísticas históricas si existen
+            if (hist.total_dias && hist.total_dias > 0) {
+                summaryHTML += `
+                    <div class="stat-card" style="grid-column: span 2; background: #e3f2fd;">
+                        <div class="stat-label">📊 Datos Históricos (${hist.total_dias} días)</div>
+                        <div style="font-size: 0.9em; margin-top: 10px;">
+                            Lluvia total: ${hist.lluvia_total_historica || 0} mm<br>
+                            Promedio: ${hist.lluvia_promedio_historica || 0} mm/día<br>
+                            Máximo registrado: ${hist.lluvia_maxima_historica || 0} mm
+                        </div>
+                    </div>
+                `;
+            }
+            
             document.getElementById('summary').innerHTML = summaryHTML;
             
             // Crear gráfico
@@ -488,16 +523,28 @@ def get_zones():
 
 @app.route('/api/simulate', methods=['POST'])
 def simulate():
-    data = request.json
-    zone = data['zone']
-    config = data['config']
-    
-    results, summary = modelo.evaluate_scenario(zone, config)
-    
-    return jsonify({
-        'summary': summary,
-        'hourly': results.to_dict('records')
-    })
+    try:
+        data = request.json
+        zone = data['zone']
+        config = data['config']
+        
+        results, summary = modelo.evaluate_scenario(zone, config)
+        
+        # Aplanar el resumen para facilitar el acceso en JavaScript
+        response = {
+            'summary': {
+                'zona': summary['zona'],
+                'latitud': summary['latitud'],
+                'longitud': summary['longitud'],
+                'datos_historicos': summary['datos_historicos'],
+                'simulacion': summary['simulacion']
+            },
+            'hourly': results.to_dict('records')
+        }
+        
+        return jsonify(response)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
